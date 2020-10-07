@@ -1,0 +1,182 @@
+version: '3'
+services:
+
+  #PHP Laravel App Service
+  laravel-app:
+    build:
+      context: .
+      dockerfile: laravel-app.dockerfile
+    image: laravel-app
+    container_name: laravel-app
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      SERVICE_NAME: laravel-app
+      SERVICE_TAGS: dev
+    working_dir: /var/www
+    volumes:
+      - ./laravel-app:/var/www
+      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - app-network
+
+  #PHP Laravel Queue Service
+  laravel-queue:
+    build:
+      context: .
+      dockerfile: laravel-queue.dockerfile
+    image: laravel-queue
+    container_name: laravel-queue
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      SERVICE_NAME: laravel-queue
+      SERVICE_TAGS: dev
+    working_dir: /var/www
+    volumes:
+      - ./laravel-app:/var/www
+      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - app-network
+    command: php artisan queue:work redis --verbose
+
+  #WobstBox Queue Service
+  wobst-queue:
+    build:
+      context: .
+      dockerfile: laravel-queue.dockerfile
+    image: wobst-queue
+    container_name: wobst-queue
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      SERVICE_NAME: wobst-queue
+      SERVICE_TAGS: dev
+    working_dir: /var/www
+    volumes:
+      - ./laravel-app:/var/www
+      - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - app-network
+    command: php artisan queue:work redis --verbose --queue=wobstbox --timeout=0
+
+  #Nginx Service
+  nginx:
+    image: nginx:mainline-alpine
+    container_name: nginx
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - laravel-app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./laravel-app:/var/www
+      - ./nginx/conf.d/:/etc/nginx/conf.d/
+      - ./certbot/etc:/etc/letsencrypt
+      - ./certbot/var:/var/www/certbot
+      - ./dhparam:/etc/ssl/certs
+    networks:
+      - app-network
+
+  #Certbot Service
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    depends_on:
+      - nginx
+    volumes:
+      - ./certbot/etc:/etc/letsencrypt
+      - ./certbot/var:/var/lib/letsencrypt
+      - ./laravel-app:/var/www
+    command: certonly --webroot --webroot-path=/var/www/public --email contact@domain.name --agree-tos --no-eff-email --force-renewal -d domain.name 
+
+  #PhpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: phpmyadmin
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - mysql
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: mysql
+    networks:
+      - app-network
+
+  #MySQL Service
+  mysql:
+    image: mysql:latest
+    container_name: mysql
+    restart: unless-stopped
+    tty: true
+    environment:
+      MYSQL_DATABASE: supedio_vzl
+      MYSQL_ROOT_PASSWORD: password123
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - dbdata:/var/lib/mysql/
+      - ./mysql/conf/my.cnf:/etc/mysql/my.cnf
+      - ./mysql/mysql-files:/var/lib/mysql-files/
+    networks:
+      - app-network
+    #ports:
+    #  - "3306:3306"
+
+  #Redis Service
+  redis:
+    image: redis
+    container_name: redis
+    restart: unless-stopped
+    tty: true
+    volumes:
+      - ./redis/data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - app-network
+    #ports:
+    #  - "6379:6379"
+
+  #WobstBox Service
+  wobstbox:
+    build:
+      context: .
+      dockerfile: wobstbox.dockerfile
+    image: wobstbox
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+        reservations:
+          cpus: '0.25'
+    container_name: wobstbox
+    restart: unless-stopped
+    tty: true
+    volumes:
+      - ./wobstbox:/app
+    command: ./Backendserver
+    networks:
+      - app-network
+
+#Docker Networks
+networks:
+  app-network:
+    driver: bridge
+
+#Docker Volumes
+volumes:
+  dbdata:
+    driver: local
